@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AutoClaw Chat</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e2230; --border: #2a2f3f;
+    --text: #e7eaf2; --muted: #8b93a7; --accent: #4f8cff; --accent2: #7aa7ff;
+    --user: #2b4a7d; --assistant: #1e2230; --code: #12141c;
+    --ok: #3ddc84; --bad: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  select, button, input {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 12px; font: inherit; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+  button { cursor: pointer; transition: background .15s; }
+  button:hover { background: #262b3b; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .spacer { flex: 1; }
+  #chat { flex: 1; overflow-y: auto; padding: 22px 18px; scroll-behavior: smooth; }
+  .msg { max-width: 820px; margin: 0 auto 16px; display: flex; gap: 10px; }
+  .msg .avatar {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+    background: var(--panel2); border: 1px solid var(--border);
+  }
+  .msg .bubble {
+    padding: 10px 14px; border-radius: 12px; background: var(--assistant);
+    border: 1px solid var(--border); min-width: 0; overflow-wrap: anywhere;
+  }
+  .msg.user .bubble { background: var(--user); border-color: #3a5f9e; }
+  .bubble .who { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .bubble .body { white-space: normal; }
+  .bubble .body p { margin: 0 0 8px; } .bubble .body p:last-child { margin: 0; }
+  .bubble pre {
+    background: var(--code); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; overflow-x: auto; font-size: 13px; margin: 8px 0;
+  }
+  .bubble code { font-family: Consolas, monospace; font-size: 13px; }
+  .bubble :not(pre) > code { background: var(--code); padding: 1px 5px; border-radius: 5px; }
+  details.reasoning {
+    margin: 0 0 8px; font-size: 13px; color: var(--muted);
+    border-left: 2px solid var(--border); padding-left: 10px;
+  }
+  details.reasoning summary { cursor: pointer; user-select: none; }
+  details.reasoning .rtext { white-space: pre-wrap; margin-top: 6px; }
+  .cursor-blink::after { content: "▍"; color: var(--accent); animation: blink 1s step-start infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .status {
+    color: var(--muted); font-size: 13.5px; font-style: italic;
+    padding: 2px 0; animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .err { color: var(--bad); }
+  footer {
+    padding: 12px 18px 16px; background: var(--panel); border-top: 1px solid var(--border);
+  }
+  .composer { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+  .composer textarea {
+    flex: 1; resize: none; max-height: 180px; min-height: 44px;
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 12px; padding: 11px 14px; font: inherit; outline: none; line-height: 1.5;
+  }
+  .composer textarea:focus { border-color: var(--accent); }
+  #send, #stop { height: 44px; min-width: 84px; border-radius: 12px; font-weight: 600; }
+  #send { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #send:hover { background: var(--accent2); }
+  #stop { display: none; }
+  .hint { max-width: 820px; margin: 6px auto 0; font-size: 12px; color: var(--muted); text-align: center; }
+  #pending { max-width: 820px; margin: 0 auto 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  #pending:empty { display: none; }
+  .chip {
+    position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border); cursor: pointer;
+  }
+  .chip img { width: 100%; height: 100%; object-fit: cover; }
+  .chip .x {
+    position: absolute; top: 2px; right: 4px; color: #fff; font-size: 13px;
+    text-shadow: 0 0 3px #000;
+  }
+  .media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .media img { max-width: 240px; max-height: 180px; border-radius: 8px; border: 1px solid var(--border); }
+  .media .file { color: var(--accent2); text-decoration: none; font-size: 13.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="status"></div>
+  <h1>AutoClaw <span>Chat</span></h1>
+  <select id="model" title="Model / Agent"></select>
+  <div class="spacer"></div>
+  <button id="clear">Đoạn chat mới</button>
+</header>
+
+<div id="chat"></div>
+
+<footer>
+  <div id="pending"></div>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Nhập tin nhắn… (Enter gửi, Shift+Enter xuống dòng, dán/kéo ảnh vào đây)"></textarea>
+    <button id="send">Gửi</button>
+    <button id="stop">Dừng</button>
+  </div>
+  <div class="hint">streaming · API tương thích OpenAI tại <code>/v1/chat/completions</code> · dán (Ctrl+V) hoặc kéo-thả ảnh để đính kèm</div>
+</footer>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const chatEl = $('chat'), inputEl = $('input'), sendBtn = $('send'), stopBtn = $('stop');
+const messages = [];          // [{role, content}] lịch sử gửi lên API
+let controller = null;        // AbortController của lượt đang stream
+let pendingImages = [];       // data URLs chờ gửi kèm tin nhắn tiếp theo
+
+// ---------- image attachments (paste / drag-drop) ----------
+function renderPending() {
+  $('pending').innerHTML = pendingImages
+    .map((u, i) => `<div class="chip" data-i="${i}" title="Bấm để bỏ ảnh"><img src="${u}"/><span class="x">✕</span></div>`)
+    .join('');
+  for (const chip of $('pending').children) {
+    chip.onclick = () => { pendingImages.splice(+chip.dataset.i, 1); renderPending(); };
+  }
+}
+function addImageFile(file) {
+  if (!file.type.startsWith('image/')) return;
+  if (pendingImages.length >= 10) return;
+  const reader = new FileReader();
+  reader.onload = () => { pendingImages.push(reader.result); renderPending(); };
+  reader.readAsDataURL(file);
+}
+inputEl.addEventListener('paste', (e) => {
+  for (const item of e.clipboardData?.items || []) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      addImageFile(item.getAsFile());
+    }
+  }
+});
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  for (const f of e.dataTransfer?.files || []) addImageFile(f);
+});
+
+// ---------- markdown mini renderer (escape trước, rồi mới format) ----------
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function md(src) {
+  const blocks = [];
+  let s = esc(src).replace(/```(\w*)\n?([\s\S]*?)(?:```|$)/g, (_, lang, code) => {
+    blocks.push(`<pre><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  });
+  s = s
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|\n)### (.+)/g, '$1<b>$2</b>')
+    .replace(/(^|\n)## (.+)/g, '$1<b>$2</b>')
+    .replace(/(^|\n)# (.+)/g, '$1<b>$2</b>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|\n)([-*] .+(?:\n[-*] .+)*)/g, (_, p1, list) =>
+      p1 + '<ul>' + list.split('\n').map((l) => `<li>${l.replace(/^[-*] /, '')}</li>`).join('') + '</ul>');
+  s = s.split(/\n{2,}/).map((p) => (/^\s*<(ul|pre)/.test(p) ? p : `<p>${p.replace(/\n/g, '<br/>')}</p>`)).join('');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
+}
+
+// ---------- UI helpers ----------
+function addMsg(role, text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+  const avatar = role === 'user' ? '👤' : '🤖';
+  wrap.innerHTML = `<div class="avatar">${avatar}</div>
+    <div class="bubble"><div class="who">${role === 'user' ? 'Bạn' : 'Assistant'}</div><div class="body"></div></div>`;
+  wrap.querySelector('.body').innerHTML = text ? md(text) : '';
+  chatEl.appendChild(wrap);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return wrap;
+}
+const scrollIfNear = () => {
+  if (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 160) chatEl.scrollTop = chatEl.scrollHeight;
+};
+
+function setStreaming(on) {
+  sendBtn.style.display = on ? 'none' : '';
+  stopBtn.style.display = on ? '' : 'none';
+  inputEl.disabled = on;
+}
+
+// ---------- models ----------
+async function loadModels() {
+  try {
+    const res = await fetch('/v1/models');
+    const data = await res.json();
+    const sel = $('model');
+    sel.innerHTML = '';
+    const preferred = localStorage.getItem('ac_model') || 'main';
+    let found = false;
+    for (const m of data.data) {
+      const opt = document.createElement('option');
+      opt.value = m.id; opt.textContent = m.id;
+      if (m.owned_by === 'autoclaw-agent') opt.textContent += '  (agent)';
+      if (m.id === preferred) { opt.selected = true; found = true; }
+      sel.appendChild(opt);
+    }
+    if (!found) sel.value = 'main';
+    sel.onchange = () => localStorage.setItem('ac_model', sel.value);
+    setStatus('ok');
+  } catch {
+    setStatus('bad');
+    setTimeout(loadModels, 3000);
+  }
+}
+function setStatus(cls) {
+  $('status').className = 'dot ' + cls;
+  $('status').title = cls === 'ok' ? 'Đã kết nối API' : 'Mất kết nối — thử lại…';
+}
+
+// ---------- chat với streaming ----------
+async function send() {
+  const text = inputEl.value.trim();
+  if ((!text && pendingImages.length === 0) || controller) return;
+  inputEl.value = ''; inputEl.style.height = 'auto';
+
+  // có ảnh -> content dạng multimodal chuẩn OpenAI
+  const userContent = pendingImages.length
+    ? [
+        ...(text ? [{ type: 'text', text }] : [{ type: 'text', text: '(mô tả các ảnh đính kèm)' }]),
+        ...pendingImages.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ]
+    : text;
+  messages.push({ role: 'user', content: userContent });
+  pendingImages = []; renderPending();
+  addMsg('user', text || '🖼️ ảnh đính kèm');
+
+  const bubble = addMsg('bot', '');
+  const body = bubble.querySelector('.body');
+  let content = '', reasoning = '', status = '', mediaUrls = [];
+  let lastPaint = 0; let idleTimer = null;
+  controller = new AbortController();
+  setStreaming(true);
+
+  const ACTIVITY_LABELS = {
+    'session.tool': '⚙ đang chạy công cụ (tool)…',
+    'session.operation': '⚙ đang thao tác…',
+    'chat.send_timing': 'đang xử lý…',
+    'sessions.changed': 'đang chuẩn bị session…',
+    'agent': 'agent đang hoạt động…',
+  };
+  const setStatusText = (s) => { status = s; paint(true); };
+  const armIdleHint = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (!content && !reasoning) setStatusText('⏳ agent đang xử lý — có thể đang chạy tool, vui lòng đợi (~1 phút)…');
+    }, 8000);
+  };
+
+  const paint = (force) => {
+    const now = Date.now();
+    if (!force && now - lastPaint < 80) return; // tiết kiệm re-render khi delta dồn dập
+    lastPaint = now;
+    let html = '';
+    if (reasoning) {
+      html += `<details class="reasoning"${content ? '' : ' open'}><summary>Suy luận</summary><div class="rtext"></div></details>`;
+    }
+    if (!content && status) {
+      html += `<div class="status">${esc(status)}</div>`;
+    } else if (content || !reasoning) {
+      html += `<div class="ctext ${!content ? 'cursor-blink' : ''}"></div>`;
+    }
+    if (mediaUrls.length && !status) html += `<div class="media"></div>`;
+    body.innerHTML = html;
+    const r = body.querySelector('.rtext'); if (r) r.textContent = reasoning;
+    const c = body.querySelector('.ctext'); if (c) c.innerHTML = content ? md(content) : '';
+    const m = body.querySelector('.media');
+    if (m) m.innerHTML = mediaUrls.map((p) => {
+      const name = p.path.split(/[\\/]/).pop();
+      return /^image\//.test(p.mime || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(name)
+        ? `<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}" loading="lazy" alt="${esc(name)}"/></a>`
+        : `<a class="file" href="${p.url}" target="_blank" rel="noopener">📎 ${esc(name)}</a>`;
+    }).join('');
+    scrollIfNear();
+  };
+
+  try {
+    const res = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({ model: $('model').value, stream: true, activity: true, messages: [...messages] }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    armIdleHint();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        let j; try { j = JSON.parse(data); } catch { continue; }
+        if (j.type === 'activity') {
+          setStatusText(ACTIVITY_LABELS[j.event] || `… ${j.event}`);
+          armIdleHint();
+          continue;
+        }
+        if (Array.isArray(j.media_urls)) { mediaUrls = j.media_urls; continue; }
+        const d = j.choices?.[0]?.delta || {};
+        if (d.reasoning_content) { reasoning += d.reasoning_content; armIdleHint(); }
+        if (d.content) { content += d.content; }
+        paint(); 
+      }
+    }
+    clearTimeout(idleTimer);
+    if (!content && !reasoning) content = '(không có nội dung trả về)';
+    status = '';
+    paint(true);
+    // render file/ảnh agent xuất ra (đường dẫn tuyệt đối -> proxy /v1/media)
+    if (mediaUrls.length) {
+      let mh = body.querySelector('.media-out');
+      if (!mh) { mh = document.createElement('div'); mh.className = 'media media-out'; body.appendChild(mh); }
+      for (const m of mediaUrls) {
+        const name = (m.path || m.url || '').split(/[\\/]/).pop() || 'file';
+        const href = m.url || `/v1/media?path=${encodeURIComponent(m.path || '')}`;
+        if (/\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(name)) {
+          mh.insertAdjacentHTML('beforeend', `<a href="${href}" target="_blank"><img src="${href}" alt="${esc(name)}" loading="lazy"/></a>`);
+        } else {
+          mh.insertAdjacentHTML('beforeend', `<a class="file" href="${href}" target="_blank">📎 ${esc(name)}</a>`);
+        }
+      }
+    }
+    messages.push({ role: 'assistant', content: content || reasoning });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      if (content) messages.push({ role: 'assistant', content });
+      body.innerHTML += `<p class="err">(đã dừng)</p>`;
+    } else {
+      body.innerHTML = `<span class="err">Lỗi: ${esc(String(err.message || err))}</span>`;
+      messages.pop(); // bỏ tin nhắn user bị lỗi để thử lại dễ
+    }
+  } finally {
+    clearTimeout(idleTimer);
+    controller = null;
+    setStreaming(false);
+    inputEl.focus();
+  }
+}
+
+sendBtn.onclick = send;
+stopBtn.onclick = () => controller?.abort();
+$('clear').onclick = () => {
+  if (controller) controller.abort();
+  messages.length = 0;
+  chatEl.innerHTML = '';
+  addMsg('bot', 'Chào anh! Em là trợ lý chạy qua **AutoClaw gateway**. Hỏi gì cũng được 🙌');
+};
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
+});
+
+loadModels();
+addMsg('bot', 'Chào anh! Em là trợ lý chạy qua **AutoClaw gateway**. Hỏi gì cũng được 🙌');
+inputEl.focus();
+</script>
+</body>
+</html>
