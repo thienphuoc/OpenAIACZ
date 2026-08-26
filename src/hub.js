@@ -19,6 +19,7 @@
  */
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
@@ -369,6 +370,84 @@ const server = http.createServer(async (req, res) => {
         }
         hubConfig.strategy = body.strategy;
         return sendJson(res, 200, { ok: true, strategy: hubConfig.strategy });
+      }
+
+      // ---- auth export/import: let another machine copy credentials ----
+      if (req.method === 'GET' && url.pathname === '/admin/api/auth/export') {
+        // returns .gateway-token + device.json + openclaw.json (JWT) as JSON bundle
+        const stateDir = process.env.AUTOCLAW_STATE_DIR || path.join(os.homedir(), '.openclaw-autoclaw');
+        try {
+          const gatewayToken = fs.readFileSync(path.join(stateDir, '.gateway-token'), 'utf8').trim();
+          const deviceIdentity = JSON.parse(fs.readFileSync(path.join(stateDir, 'identity', 'device.json'), 'utf8'));
+          const openclawConfig = JSON.parse(fs.readFileSync(path.join(stateDir, 'openclaw.json'), 'utf8'));
+          // extract only the JWT headers (the real credential) — not the whole config
+          const providers = openclawConfig.models?.providers ?? {};
+          const providerAuth = {};
+          for (const [name, prov] of Object.entries(providers)) {
+            providerAuth[name] = {
+              baseUrl: prov.baseUrl,
+              apiKey: prov.apiKey,
+              headers: prov.headers,
+              models: (prov.models ?? []).map((m) => ({
+                id: m.id,
+                name: m.name,
+                headers: m.headers,
+              })),
+            };
+          }
+          return sendJson(res, 200, {
+            gatewayToken,
+            deviceIdentity,
+            providerAuth,
+            exportedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          return sendJson(res, 500, { error: { message: `auth export failed: ${err.message}` } });
+        }
+      }
+
+      if (req.method === 'POST' && url.pathname === '/admin/api/auth/import') {
+        // accepts the bundle from export — writes to state dir on THIS machine
+        const body = JSON.parse(await readBody(req));
+        const stateDir = process.env.AUTOCLAW_STATE_DIR || path.join(os.homedir(), '.openclaw-autoclaw');
+        try {
+          if (body.gatewayToken) {
+            fs.mkdirSync(path.dirname(path.join(stateDir, '.gateway-token')), { recursive: true });
+            fs.writeFileSync(path.join(stateDir, '.gateway-token'), body.gatewayToken + '\n');
+          }
+          if (body.deviceIdentity) {
+            fs.mkdirSync(path.join(stateDir, 'identity'), { recursive: true });
+            fs.writeFileSync(path.join(stateDir, 'identity', 'device.json'), JSON.stringify(body.deviceIdentity, null, 2));
+          }
+          if (body.providerAuth) {
+            // merge provider auth into openclaw.json
+            const cfgPath = path.join(stateDir, 'openclaw.json');
+            let cfg = {};
+            try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch { cfg = {}; }
+            cfg.models ??= { providers: {} };
+            cfg.models.providers ??= {};
+            for (const [name, prov] of Object.entries(body.providerAuth)) {
+              if (!cfg.models.providers[name]) cfg.models.providers[name] = {};
+              cfg.models.providers[name].baseUrl = prov.baseUrl;
+              cfg.models.providers[name].apiKey = prov.apiKey;
+              if (prov.headers) cfg.models.providers[name].headers = prov.headers;
+              if (prov.models) {
+                for (const m of prov.models) {
+                  const existing = (cfg.models.providers[name].models ??= []).find((x) => x.id === m.id);
+                  if (existing) {
+                    if (m.headers) existing.headers = m.headers;
+                  } else {
+                    cfg.models.providers[name].models.push({ id: m.id, name: m.name, headers: m.headers });
+                  }
+                }
+              }
+            }
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+          }
+          return sendJson(res, 200, { ok: true, message: 'auth imported — restart node to take effect' });
+        } catch (err) {
+          return sendJson(res, 500, { error: { message: `auth import failed: ${err.message}` } });
+        }
       }
 
       return sendJson(res, 404, { error: { message: `unknown admin route: ${route}` } });

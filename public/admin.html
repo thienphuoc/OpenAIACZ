@@ -47,6 +47,9 @@
     <option value="fill-first">Fill-first</option>
   </select>
   <div class="spacer"></div>
+  <button onclick="exportAuth()" style="background:var(--accent);color:#fff;border-color:var(--accent)">📤 Export Auth</button>
+  <button onclick="document.getElementById('import-file').click()">📥 Import Auth</button>
+  <input type="file" id="import-file" accept=".json" style="display:none" onchange="importAuth(this)" />
   <button onclick="refreshAll()">🔄 Refresh</button>
 </header>
 
@@ -186,6 +189,47 @@ $('strategy').onchange = async () => {
   await api('PUT', '/admin/api/strategy', { strategy: $('strategy').value });
   load();
 };
+
+// ---------- auth export / import ----------
+async function exportAuth() {
+  try {
+    const data = await api('GET', '/admin/api/auth/export');
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `autoclaw-auth-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    alert('✅ Đã tải file auth. Copy sang máy khác → mở admin panel → Import Auth → restart node.');
+  } catch (e) {
+    alert('❌ Export lỗi: ' + e.message);
+  }
+}
+
+async function importAuth(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!confirm('Import auth sẽ ghi đè .gateway-token + device.json + JWT trên máy này. Tiếp tục?')) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const res = await fetch('/admin/api/auth/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Key': localStorage.getItem('ac_admin_key') || '' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    if (result.ok) {
+      alert('✅ ' + result.message + '\n\nGiờ restart node (Ctrl+C rồi npm start lại) để load auth mới.');
+      load();
+    } else {
+      alert('❌ ' + (result.error?.message || 'import failed'));
+    }
+  } catch (e) {
+    alert('❌ Import lỗi: ' + e.message);
+  }
+  input.value = '';
+}
 
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
