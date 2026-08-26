@@ -100,6 +100,38 @@ client ── HTTP/OpenAI format ──> server này ── WS protocol 4 ──
 - Client ngắt kết nối giữa chừng → server gọi `chat.abort` để huỷ run trên gateway.
 - `model` trong request: nếu trùng **id agent** của AutoClaw (vd `main`, `auto-coder`, `auto-designer`...) thì chat sẽ route sang agent đó; ngoài ra model chỉ mang tính thông tin — model LLM thật do app cấu hình (GLM-5.3).
 
+## Function calling (chuẩn OpenAI) ✅
+
+Request có `tools` (định nghĩa function theo format OpenAI) sẽ được proxy sang **endpoint gốc của gateway** (`gateway.http.endpoints.chatCompletions`) — nơi model (glm-5.3, deepseek...) gọi tool **native**:
+
+1. Client gửi `tools` → model trả `tool_calls` + `finish_reason: "tool_calls"`
+2. Client chạy function, gửi lại message `role:"tool"` kèm `tool_call_id`
+3. Model đọc kết quả, trả câu trả lời cuối `finish_reason: "stop"`
+
+```python
+tools = [{
+  "type": "function",
+  "function": {
+    "name": "get_weather",
+    "description": "Get current weather for a city",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+  },
+}]
+resp = client.chat.completions.create(model="zaicoding_glm-5.3", messages=msgs, tools=tools)
+tc = resp.choices[0].message.tool_calls   # model gọi get_weather(city="Hanoi")
+# ... chạy function, rồi gửi tool result message role="tool" ...
+```
+
+**Yêu cầu một lần:** bật `gateway.http.endpoints.chatCompletions.enabled = true` trong config gateway (`~/.openclaw-autoclaw/openclaw.json`) rồi restart app AutoClaw. Lệnh nhanh:
+
+```bash
+node ~/autoclaw-api/autoclaw-api.js ask config.get '{}'   # lấy hash
+# set gateway.http.endpoints.chatCompletions={enabled:true} qua config.set với raw + baseHash
+# rồi: node ~/autoclaw-api/autoclaw-api.js ask gateway.restart.request '{}'
+```
+
+Lưu ý: request có `tools` dùng model của agent đang cấu hình (model trong request mang tính định danh); `thinking` và `activity` không áp dụng trên path này.
+
 ## Ảnh đầu vào (image input)
 
 Client gửi ảnh theo chuẩn OpenAI multimodal — `content` dạng mảng các part `{type:"image_url", image_url:{url}}`. Hai dạng URL đều được:
@@ -137,7 +169,8 @@ UI tự render link tải cho file (`📎 filename`) và ảnh inline (`<img>`) 
 
 ## Giới hạn hiện tại
 
-- `usage` là ước lượng (~4 ký tự/token) vì gateway không báo usage theo run.
+- `usage` là ước lượng (~4 ký tự/token) vì gateway không báo usage theo run — **trừ path function calling** (gateway báo usage thật, có cả reasoning_tokens).
+- Function calling yêu cầu bật `gateway.http.endpoints.chatCompletions` (xem mục trên); request có `tools` đi path proxy riêng.
 - **Function calling chuẩn OpenAI chưa hỗ trợ** — gateway không cho client định nghĩa tools; agent có tools riêng chạy phía agent. Muốn model gọi tool của mình thì đăng ký MCP server trong config gateway.
 - `temperature`, `top_p`, `max_tokens`... được bỏ qua.
 - Proxy `/v1/media` chỉ tải được file trong workspace agent "main" (giới hạn từ gateway, không phải từ server này).

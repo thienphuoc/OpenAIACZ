@@ -88,6 +88,45 @@ async function listModels() {
 
 // ---------- chat completions ----------
 
+/**
+ * Requests carrying OpenAI `tools` are proxied to the gateway's own
+ * /v1/chat/completions HTTP endpoint (gateway.http.endpoints.chatCompletions),
+ * which implements native function calling: the model emits `tool_calls`,
+ * the client executes and posts the result back — exact OpenAI semantics.
+ */
+async function proxyToolsRequest(req, res, body, agentId) {
+  const token = readToken();
+  if (!token) return sendJson(res, 502, errorBody('gateway token unavailable'));
+
+  const { model: _drop, activity: _a, ...forward } = body;
+  const upstream = await fetch(`${config.gateway.httpUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      ...forward,
+      model: agentId ? `openclaw/${agentId}` : 'openclaw',
+    }),
+  });
+
+  if (body.stream === true) {
+    res.writeHead(upstream.status, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': '*',
+    });
+    if (upstream.body) for await (const chunk of upstream.body) res.write(chunk);
+    return res.end();
+  }
+
+  const text = await upstream.text();
+  res.writeHead(upstream.status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+  });
+  return res.end(text);
+}
+
 async function handleChatCompletions(req, res) {
   let body;
   try {
@@ -110,6 +149,11 @@ async function handleChatCompletions(req, res) {
     const ids = (await listModels()).filter((m) => m.owned_by === 'autoclaw-agent').map((m) => m.id);
     if (ids.includes(model)) agentId = model;
   } catch { /* model list unavailable — send without agent routing */ }
+
+  // function calling: hand the whole request to the gateway's native OpenAI endpoint
+  if (Array.isArray(body.tools) && body.tools.length > 0) {
+    return proxyToolsRequest(req, res, body, agentId);
+  }
 
   const prompt = messagesToPrompt(messages);
   const attachments = await extractAttachments(messages); // OpenAI image_url parts -> gateway attachments
