@@ -132,6 +132,28 @@ node ~/autoclaw-api/autoclaw-api.js ask config.get '{}'   # lấy hash
 
 Lưu ý: request có `tools` dùng model của agent đang cấu hình (model trong request mang tính định danh); `thinking` và `activity` không áp dụng trên path này.
 
+## Điều chỉnh độ suy luận (thinking) 🧠
+
+Thêm param `thinking` vào body request để kiểm soát mức suy luận của model (giống chọn max/high ở các engine):
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| `off` | Tắt suy luận — nhanh nhất |
+| `minimal` / `low` | Suy luận tối thiểu / thấp |
+| `medium` | Trung bình |
+| `high` / `xhigh` | Cao / rất cao |
+| `max` | Tối đa — chậm nhất, suy luận kỹ nhất |
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "zaicoding_glm-5.3",
+  "thinking": "max",
+  "messages": [{"role":"user","content":"câu hỏi khó"}]
+}'
+```
+
+Với openai SDK Python: `client.chat.completions.create(..., extra_body={"thinking": "max"})` (param ngoài chuẩn OpenAI nên phải qua `extra_body`). Model không hỗ trợ reasoning sẽ tự bị gateway clamp về `off`.
+
 ## Ảnh đầu vào (image input)
 
 Client gửi ảnh theo chuẩn OpenAI multimodal — `content` dạng mảng các part `{type:"image_url", image_url:{url}}`. Hai dạng URL đều được:
@@ -171,7 +193,6 @@ UI tự render link tải cho file (`📎 filename`) và ảnh inline (`<img>`) 
 
 - `usage` là ước lượng (~4 ký tự/token) vì gateway không báo usage theo run — **trừ path function calling** (gateway báo usage thật, có cả reasoning_tokens).
 - Function calling yêu cầu bật `gateway.http.endpoints.chatCompletions` (xem mục trên); request có `tools` đi path proxy riêng.
-- **Function calling chuẩn OpenAI chưa hỗ trợ** — gateway không cho client định nghĩa tools; agent có tools riêng chạy phía agent. Muốn model gọi tool của mình thì đăng ký MCP server trong config gateway.
-- `temperature`, `top_p`, `max_tokens`... được bỏ qua.
+- `temperature`, `top_p`, `max_tokens`... được bỏ qua (dùng `thinking` để kiểm soát độ suy luận).
 - Proxy `/v1/media` chỉ tải được file trong workspace agent "main" (giới hạn từ gateway, không phải từ server này).
 - Token gateway (`.gateway-token`) thay đổi mỗi lần app khởi động lại — server tự đọc lại khi kết nối lại, không cần làm gì.
