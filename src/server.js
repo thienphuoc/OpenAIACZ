@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { Gateway, GatewayError, readToken } from './gateway.js';
+import { getNodeStatus } from './node-status.js';
 import {
   completionId, completionResponse, messagesToPrompt, buildUsage,
   extractAttachments, streamChunk, sseEncode, SSE_DONE, errorBody,
@@ -266,6 +267,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (url.pathname === '/health')) {
       await gateway.ensureConnected();
       return sendJson(res, 200, { ok: true, gateway: config.gateway.url });
+    }
+
+    if (req.method === 'GET' && (url.pathname === '/_status')) {
+      const status = await getNodeStatus();
+      return sendJson(res, 200, status);
     }
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/ui' || url.pathname === '/index.html')) {

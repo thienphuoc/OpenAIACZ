@@ -1,4 +1,6 @@
 node_modules/
 config.json
+hub-config.json
+hub-nodes.json
 *.log
 .DS_Store

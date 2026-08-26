@@ -1,0 +1,13 @@
+{
+  "host": "0.0.0.0",
+  "port": 8788,
+  "adminKey": "change-me",
+  "strategy": "round-robin",
+  "probeIntervalMs": 30000,
+  "cooldownMs": 60000,
+  "apiKeys": [],
+  "nodes": [
+    { "url": "http://127.0.0.1:8787", "label": "Node A (local)", "apiKey": "" },
+    { "url": "http://192.168.1.50:8787", "label": "Node B (LAN)", "apiKey": "" }
+  ]
+}

@@ -196,3 +196,63 @@ UI tự render link tải cho file (`📎 filename`) và ảnh inline (`<img>`) 
 - `temperature`, `top_p`, `max_tokens`... được bỏ qua (dùng `thinking` để kiểm soát độ suy luận).
 - Proxy `/v1/media` chỉ tải được file trong workspace agent "main" (giới hạn từ gateway, không phải từ server này).
 - Token gateway (`.gateway-token`) thay đổi mỗi lần app khởi động lại — server tự đọc lại khi kết nối lại, không cần làm gì.
+
+## Pool nhiều máy (Hub + Admin Panel) 🌐
+
+Chạy N máy song song, mỗi máy có app AutoClaw riêng (account/JWT riêng → pool quota). 1 hub trung tâm làm load balancer + trang quản trị — mượn ý tưởng cluster từ CLIProxyAPI.
+
+```
+Client ──> Hub:8788 (admin panel + load balancer)
+              ├── Node A:8787 (máy A, account A)
+              ├── Node B:8787 (máy B, account B)
+              └── Node C:8787 (máy C, account C)
+```
+
+### Chạy
+
+**Máy A (chạy hub + node):**
+```bash
+cd D:\projects\autoclaw
+HUB_ADMIN_KEY=secret npm run start:hub   # hub tại :8788
+npm start                                 # node A tại :8787
+```
+
+**Máy B, C (chỉ node):**
+```bash
+# Copy thư mục project sang, chạy:
+cd autoclaw && npm start                  # server :8787
+# Vào admin panel máy A (http://<IP-A>:8788/admin) → Add Node: http://<IP-B>:8787
+```
+
+**Client (bất kỳ máy nào):**
+```bash
+curl http://<IP-A>:8788/v1/chat/completions ...   # hub tự forward sang node còn quota
+```
+
+### Admin Panel
+
+Mở `http://<hub-ip>:8788/admin` — xem:
+- **Nodes**: status (up/down/cooldown), latency, model count, quota từng model, request/success/fail count
+- **Add/Remove node**: thêm/xóa máy qua form
+- **Strategy**: round-robin (mặc định) hoặc fill-first
+- **Recent errors**: log lỗi gần đây từng node
+- **Quota probe**: mỗi node báo model nào còn quota (probe upstream 5 phút/lần qua `/_status`)
+
+### Hub config
+
+Tạo `hub-config.json` (xem `hub-config.example.json`) hoặc dùng env:
+
+| Env | Mặc định | Ý nghĩa |
+|---|---|---|
+| `HUB_HOST` / `HUB_PORT` | `0.0.0.0` / `8788` | Địa chỉ hub |
+| `HUB_ADMIN_KEY` | (open) | Key bảo vệ admin API + panel |
+| `HUB_STRATEGY` | `round-robin` | Chiến lược chọn node |
+| `HUB_PROBE_INTERVAL_MS` | `30000` | Interval health probe |
+| `HUB_COOLDOWN_MS` | `60000` | Thời gian cooldown khi node lỗi |
+| `API_KEYS` | `[]` | Client API keys (như server) |
+
+### Failover
+
+- Node trả 5xx/429 → hub mark cooldown 60s, thử node kế tiếp (max 3 retry)
+- Node down → tự skip, request vẫn chạy qua node up
+- Stream đã gửi header thì không retry được (giới hạn HTTP) — client tự retry
