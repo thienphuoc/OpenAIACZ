@@ -96,3 +96,40 @@ export async function probeModels() {
 export async function getNodeStatus() {
   return probeModels();
 }
+
+// ---------- official credit/quota API (agent-assetmgr) ----------
+// The AutoClaw cloud exposes the real wallet balance used by the Credits page.
+let walletCache = { at: 0, data: null };
+
+export async function getWallet() {
+  if (walletCache.data && Date.now() - walletCache.at < 60_000) return walletCache.data;
+  const prov = readProviderConfig();
+  const model = prov?.models?.find((m) => m.headers?.['X-Authorization']);
+  if (!model) return { error: 'no_jwt' };
+  const auth = model.headers['X-Authorization'];
+  const headers = { Authorization: auth, 'X-Authorization': auth, 'User-Agent': 'autoclaw-node-status/1.0' };
+  try {
+    const [walletsRes, expiringRes] = await Promise.all([
+      fetch('https://autoglm-api.autoglm.ai/agent-assetmgr/api/v2/wallets', { headers, signal: AbortSignal.timeout(15000) }),
+      fetch('https://autoglm-api.autoglm.ai/agent-assetmgr/api/v1/points/expiring', { headers, signal: AbortSignal.timeout(15000) }).catch(() => null),
+    ]);
+    if (!walletsRes.ok) return { error: `http_${walletsRes.status}` };
+    const wallets = (await walletsRes.json())?.data;
+    let expiring = null;
+    if (expiringRes?.ok) {
+      try { expiring = (await expiringRes.json())?.data ?? null; } catch { /* optional */ }
+    }
+    walletCache = {
+      at: Date.now(),
+      data: {
+        totalBalance: wallets.total_balance,
+        wallets: (wallets.wallets ?? []).map((w) => ({ type: w.public_wallet_type, name: w.display_name, balance: w.balance })),
+        expiring: expiring ? { points: expiring.expiring_points, withinDays: expiring.expire_time_value, total: expiring.total_points } : null,
+        fetchedAt: new Date().toISOString(),
+      },
+    };
+    return walletCache.data;
+  } catch (err) {
+    return { error: err.name === 'TimeoutError' ? 'timeout' : err.message };
+  }
+}

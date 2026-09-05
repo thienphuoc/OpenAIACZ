@@ -39,7 +39,7 @@ export const config = {
   apiKeys: (process.env.API_KEYS || (fileCfg.apiKeys ?? []).join(','))
     .split(',').map((s) => s.trim()).filter(Boolean),
 
-  requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || fileCfg.requestTimeoutMs || 180_000),
+  requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || fileCfg.requestTimeoutMs || 300_000),
 
   gateway: {
     url: process.env.AUTOCLAW_WS || fileCfg.gateway?.url || 'ws://127.0.0.1:18789',

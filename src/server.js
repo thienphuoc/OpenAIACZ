@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { Gateway, GatewayError, readToken } from './gateway.js';
-import { getNodeStatus } from './node-status.js';
+import { getNodeStatus, getWallet } from './node-status.js';
 import {
   completionId, completionResponse, messagesToPrompt, buildUsage,
   extractAttachments, streamChunk, sseEncode, SSE_DONE, errorBody,
@@ -272,6 +272,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (url.pathname === '/_status')) {
       const status = await getNodeStatus();
       return sendJson(res, 200, status);
+    }
+
+    // official credit balance + model availability (for hub / monitoring)
+    if (req.method === 'GET' && (url.pathname === '/v1/quota' || url.pathname === '/quota')) {
+      const [wallet, models] = await Promise.all([getWallet(), getNodeStatus()]);
+      return sendJson(res, 200, {
+        credits: wallet.error ? null : wallet.totalBalance,
+        wallets: wallet.error ? [] : wallet.wallets,
+        expiring: wallet.expiring ?? null,
+        walletError: wallet.error ?? null,
+        models: models.models ?? [],
+      });
     }
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/ui' || url.pathname === '/index.html')) {
