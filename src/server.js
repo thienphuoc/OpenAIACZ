@@ -422,6 +422,12 @@ const server = http.createServer(async (req, res) => {
       return ok ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, errorBody('account not found'));
     }
 
+    if (req.method === 'GET' && url.pathname === '/accounts') {
+      const html = fs.readFileSync(path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'public', 'accounts.html'));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(html);
+    }
+
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/ui' || url.pathname === '/index.html')) {
       const uiPath = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'public', 'index.html');
       const html = fs.readFileSync(uiPath);
