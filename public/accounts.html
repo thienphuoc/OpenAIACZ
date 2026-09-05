@@ -76,6 +76,16 @@
     </div>
   </div>
 
+  <h2>Agent Primary Model <span class="hint">(model thật mà agent main dùng khi chat — đổi là chạy ngay, không cần restart)</span></h2>
+  <div class="add-box">
+    <div class="add-row">
+      <select id="primary-select" style="flex:1;max-width:380px"></select>
+      <button class="primary" id="save-primary" onclick="savePrimary()">💾 Lưu primary</button>
+      <span class="hint" id="primary-status"></span>
+    </div>
+    <div class="hint">Đây là model LLM thật phía sau mọi chat qua gateway (model trong request chỉ để định danh). Đổi xong gateway tự hot-reload trong vài giây.</div>
+  </div>
+
   <h2>Danh sách accounts</h2>
   <table>
     <thead>
@@ -120,7 +130,50 @@ async function loadAll() {
     renderCards(accountsData.accounts || []);
     renderAccounts(accountsData.accounts || []);
     renderModels(statusData.models || []);
+    await loadAgentConfig();
   } catch (e) { toast('Lỗi load: ' + e.message, true); }
+}
+
+// ---------- agent primary model ----------
+async function loadAgentConfig() {
+  try {
+    const cfg = await api('GET', '/v1/agent-config');
+    const sel = $('primary-select');
+    const current = (cfg.primary || '').replace(/^zai\//, '');
+    sel.innerHTML = '';
+    for (const m of cfg.availableModels || []) {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      if (m === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    if (current && ![...sel.options].some(o => o.value === current)) {
+      const opt = document.createElement('option');
+      opt.value = current; opt.textContent = current + ' (hiện tại)';
+      opt.selected = true;
+      sel.prepend(opt);
+    }
+    $('primary-status').textContent = 'đang dùng: ' + (cfg.primary || '?');
+  } catch (e) {
+    $('primary-status').textContent = '(không đọc được config: ' + e.message + ')';
+  }
+}
+
+async function savePrimary() {
+  const model = $('primary-select').value;
+  if (!model) return;
+  $('save-primary').disabled = true;
+  $('primary-status').textContent = 'đang lưu…';
+  try {
+    const r = await api('PUT', '/v1/agent-config', { primary: model });
+    $('primary-status').textContent = '✅ đã lưu: ' + r.primary + ' — ' + r.note;
+    toast('✅ Primary = ' + r.primary);
+  } catch (e) {
+    $('primary-status').textContent = '❌ ' + e.message;
+    toast('❌ ' + e.message, true);
+  } finally {
+    $('save-primary').disabled = false;
+  }
 }
 
 function renderCards(accs) {

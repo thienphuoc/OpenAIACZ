@@ -345,6 +345,45 @@ async function handleChatCompletions(req, res) {
   }
 }
 
+// ---------- agent config (primary model) ----------
+
+/** Read the live agent primary model through the gateway WS config API. */
+async function getAgentConfig() {
+  const cfg = await gateway.request('config.get', {});
+  const parsed = cfg.parsed ?? cfg.config ?? {};
+  const defaults = parsed.agents?.defaults?.model ?? {};
+  const agentsList = (parsed.agents?.list ?? []).map((a) => ({ id: a.id, model: a.model ?? null }));
+  const models = (parsed.models?.providers?.zai?.models ?? []).map((m) => m.id);
+  return {
+    primary: defaults.primary ?? null,
+    pdfModel: defaults.pdfModel?.primary ?? null,
+    agents: agentsList,
+    availableModels: models,
+    hash: cfg.hash,
+  };
+}
+
+/** Set the primary model (normalizes `zai/<id>`), hot-reloaded by the gateway. */
+async function setAgentPrimaryModel(model) {
+  const raw = typeof model === 'string' ? model.trim() : '';
+  if (!raw) throw new GatewayError('`primary` required (model id or zai/<id>)', 'invalid_request', 400);
+  const primary = raw.includes('/') ? raw : `zai/${raw}`;
+
+  const cfg = await gateway.request('config.get', {});
+  const parsed = cfg.parsed ?? cfg.config ?? {};
+  const known = (parsed.models?.providers?.zai?.models ?? []).map((m) => m.id);
+  const short = primary.split('/')[1];
+  if (known.length && !known.includes(short)) {
+    throw new GatewayError(`unknown model "${short}" — known: ${known.join(', ')}`, 'invalid_request', 400);
+  }
+  parsed.agents ??= {};
+  parsed.agents.defaults ??= {};
+  parsed.agents.defaults.model ??= {};
+  parsed.agents.defaults.model.primary = primary;
+  await gateway.request('config.set', { raw: JSON.stringify(parsed, null, 2), baseHash: cfg.hash });
+  return { ok: true, primary, note: 'hot-reloaded by gateway (may take a few seconds)' };
+}
+
 // ---------- server ----------
 
 const server = http.createServer(async (req, res) => {
@@ -426,6 +465,20 @@ const server = http.createServer(async (req, res) => {
       const html = fs.readFileSync(path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'public', 'accounts.html'));
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end(html);
+    }
+
+    // ---- agent config: view / change primary model ----
+    if (req.method === 'GET' && url.pathname === '/v1/agent-config') {
+      return sendJson(res, 200, await getAgentConfig());
+    }
+    if (req.method === 'PUT' && url.pathname === '/v1/agent-config') {
+      const body = JSON.parse(await readBody(req));
+      try {
+        return sendJson(res, 200, await setAgentPrimaryModel(body.primary ?? body.model));
+      } catch (err) {
+        const status = err instanceof GatewayError ? err.status : 502;
+        return sendJson(res, status, errorBody(err.message, 'invalid_request_error', err.code));
+      }
     }
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/ui' || url.pathname === '/index.html')) {
