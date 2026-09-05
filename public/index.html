@@ -107,7 +107,9 @@
   <div class="dot" id="status"></div>
   <h1>AutoClaw <span>Chat</span></h1>
   <select id="model" title="Model / Agent"></select>
+  <select id="account" title="Account (để trống = qua gateway)"><option value="">Gateway (mặc định)</option></select>
   <div class="spacer"></div>
+  <div id="credits" title="Credit còn lại (chuẩn từ cloud)" style="font-size:13px;color:var(--muted)">— credits</div>
   <button id="clear">Đoạn chat mới</button>
 </header>
 
@@ -235,6 +237,39 @@ function setStatus(cls) {
   $('status').title = cls === 'ok' ? 'Đã kết nối API' : 'Mất kết nối — thử lại…';
 }
 
+// ---------- accounts + credits ----------
+async function loadAccounts() {
+  try {
+    const res = await fetch('/v1/accounts');
+    const data = await res.json();
+    const sel = $('account');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Gateway (mặc định)</option>';
+    for (const a of data.accounts || []) {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      const bal = a.wallet?.ok ? ` · ${a.wallet.totalBalance.toLocaleString()}cr` : '';
+      const bad = a.onCooldown ? ' ⛔' : '';
+      opt.textContent = `${a.label}${bal}${bad}`;
+      sel.appendChild(opt);
+    }
+    sel.value = cur;
+  } catch { /* node without accounts */ }
+}
+
+async function loadCredits() {
+  try {
+    const res = await fetch('/v1/quota');
+    const d = await res.json();
+    $('credits').textContent = d.credits != null
+      ? `${d.credits.toLocaleString()} credits`
+      : 'credits: n/a';
+    $('credits').style.color = d.credits != null && d.credits < 1000 ? 'var(--bad)' : 'var(--muted)';
+  } catch { /* ignore */ }
+}
+loadCredits(); setInterval(loadCredits, 60000);
+loadAccounts(); setInterval(loadAccounts, 60000);
+
 // ---------- chat với streaming ----------
 async function send() {
   const text = inputEl.value.trim();
@@ -306,7 +341,10 @@ async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
-      body: JSON.stringify({ model: $('model').value, stream: true, activity: true, messages: [...messages] }),
+      body: JSON.stringify({
+        model: $('model').value, stream: true, activity: true, messages: [...messages],
+        ...( $('account').value ? { account: $('account').value } : {}),
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

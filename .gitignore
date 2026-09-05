@@ -6,3 +6,6 @@ hub-nodes.json
 .DS_Store
 .openclaw-autoclaw*
 *.openclaw*
+accounts.json
+.capture/
+accounts.json

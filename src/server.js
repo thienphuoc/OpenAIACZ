@@ -16,6 +16,11 @@ import { config } from './config.js';
 import { Gateway, GatewayError, readToken } from './gateway.js';
 import { getNodeStatus, getWallet } from './node-status.js';
 import {
+  listAccounts, pickAccount, headersFor, markCooldown,
+  importFromStateDir, importFromBundle, removeAccount, accountWallet, hasAccounts, getAccount,
+  getAgentSystemPrompt,
+} from './accounts.js';
+import {
   completionId, completionResponse, messagesToPrompt, buildUsage,
   extractAttachments, streamChunk, sseEncode, SSE_DONE, errorBody,
 } from './openai-format.js';
@@ -128,6 +133,97 @@ async function proxyToolsRequest(req, res, body, agentId) {
   return res.end(text);
 }
 
+/**
+ * Direct-upstream chat: call the cloud proxy with an account's JWT, bypassing
+ * the gateway. Enables multi-account quota pooling — on quota exhaustion the
+ * account is cooled down and (in auto mode) the next one takes over.
+ */
+async function chatDirect(req, res, body) {
+  const model = body.model;
+  if (!model) return sendJson(res, 400, errorBody('`model` required in direct mode (upstream model id, e.g. zaicoding_glm-5.3)'));
+  if (hasAccounts() === false) {
+    return sendJson(res, 502, errorBody('no accounts imported — POST /v1/accounts/import first', 'server_error'));
+  }
+
+  const isStream = body.stream === true;
+  const { account: preferred, direct: _d, activity: _a, ...openaiBody } = body;
+
+  // The cloud proxy only serves agent-shaped requests: the AutoClaw system
+  // prompt must lead the messages (policy gate — bare requests get 400).
+  const agentPrompt = getAgentSystemPrompt();
+  if (agentPrompt) {
+    const msgs = Array.isArray(openaiBody.messages) ? [...openaiBody.messages] : [];
+    if (msgs[0]?.role === 'system' && msgs[0]?.content?.includes('OpenClaw')) {
+      // already agent-shaped
+    } else {
+      msgs.unshift({ role: 'system', content: agentPrompt });
+    }
+    openaiBody.messages = msgs;
+  }
+  const tried = [];
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const account = pickAccount(attempt === 0 ? preferred : 'auto', model);
+    if (!account) break;
+    if (tried.includes(account.id)) continue;
+    tried.push(account.id);
+
+    const headers = headersFor(account, model);
+    let upstream;
+    try {
+      upstream = await fetch(`${account.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(openaiBody),
+      });
+    } catch (err) {
+      markCooldown(account.id, 60_000, `network: ${err.message}`);
+      continue;
+    }
+
+    if (upstream.status === 401 || upstream.status === 403) {
+      const text = await upstream.text();
+      const quota = /quota|810000/i.test(text);
+      // quota is model-specific → cooldown that (account, model) pair only
+      markCooldown(account.id, quota ? 10 * 60_000 : 60_000, `http_${upstream.status}: ${text.slice(0, 150)}`, quota ? model : undefined);
+      if (!isStream) continue;
+      if (!res.headersSent) continue;
+      res.end();
+      return;
+    }
+    if (upstream.status >= 500 || upstream.status === 429) {
+      markCooldown(account.id, 60_000, `http_${upstream.status}`, model);
+      if (!res.headersSent) continue;
+      res.end();
+      return;
+    }
+
+    if (isStream) {
+      res.writeHead(upstream.status, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*',
+        'X-Served-Account': account.label,
+      });
+      if (upstream.body) for await (const chunk of upstream.body) res.write(chunk);
+      return res.end();
+    }
+
+    const text = await upstream.text();
+    res.writeHead(upstream.status, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'X-Served-Account': account.label,
+    });
+    return res.end(text);
+  }
+
+  if (!res.headersSent) {
+    sendJson(res, 502, errorBody(`all accounts failed or on cooldown (tried ${tried.length})`, 'server_error'));
+  }
+}
+
 async function handleChatCompletions(req, res) {
   let body;
   try {
@@ -154,6 +250,11 @@ async function handleChatCompletions(req, res) {
   // function calling: hand the whole request to the gateway's native OpenAI endpoint
   if (Array.isArray(body.tools) && body.tools.length > 0) {
     return proxyToolsRequest(req, res, body, agentId);
+  }
+
+  // direct multi-account mode: body.account set, or DIRECT=1 default and agentId is absent
+  if (body.account || (body.direct === true)) {
+    return chatDirect(req, res, body);
   }
 
   const prompt = messagesToPrompt(messages);
@@ -284,6 +385,41 @@ const server = http.createServer(async (req, res) => {
         walletError: wallet.error ?? null,
         models: models.models ?? [],
       });
+    }
+
+    // ---- multi-account management ----
+    if (url.pathname === '/v1/accounts') {
+      if (req.method === 'GET') {
+        const list = listAccounts();
+        const withCredits = await Promise.all(list.map(async (a) => ({
+          ...a,
+          wallet: await accountWallet(getAccount(a.id) ?? {}),
+        })));
+        return sendJson(res, 200, { accounts: withCredits });
+      }
+      if (req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        try {
+          let account;
+          if (body.dir) account = importFromStateDir(body.dir, body.label);
+          else if (body.bundle) account = importFromBundle({ ...body.bundle, label: body.label });
+          else if (body.jwt && body.baseUrl) {
+            account = importFromBundle({
+              providerAuth: { zai: { baseUrl: body.baseUrl, models: [{ id: body.model || 'zai_auto', headers: { 'X-Authorization': body.jwt } }] } },
+              label: body.label,
+            });
+          } else return sendJson(res, 400, errorBody('provide {dir} | {bundle} | {jwt+baseUrl}'));
+          return sendJson(res, 201, { ok: true, id: account.id, label: account.label });
+        } catch (err) {
+          return sendJson(res, 400, errorBody(err.message));
+        }
+      }
+    }
+
+    if (req.method === 'DELETE' && url.pathname.startsWith('/v1/accounts/')) {
+      const id = url.pathname.split('/').pop();
+      const ok = removeAccount(id);
+      return ok ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, errorBody('account not found'));
     }
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/ui' || url.pathname === '/index.html')) {
