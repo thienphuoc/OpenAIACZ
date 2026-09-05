@@ -4,3 +4,5 @@ hub-config.json
 hub-nodes.json
 *.log
 .DS_Store
+.openclaw-autoclaw*
+*.openclaw*
