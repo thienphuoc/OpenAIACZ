@@ -212,26 +212,43 @@ function setStreaming(on) {
 // ---------- models ----------
 async function loadModels() {
   try {
-    const res = await fetch('/v1/models');
-    const data = await res.json();
-    const sel = $('model');
-    sel.innerHTML = '';
-    const preferred = localStorage.getItem('ac_model') || 'main';
-    let found = false;
-    for (const m of data.data) {
-      const opt = document.createElement('option');
-      opt.value = m.id; opt.textContent = m.id;
-      if (m.owned_by === 'autoclaw-agent') opt.textContent += '  (agent)';
-      if (m.id === preferred) { opt.selected = true; found = true; }
-      sel.appendChild(opt);
-    }
-    if (!found) sel.value = 'main';
-    sel.onchange = () => localStorage.setItem('ac_model', sel.value);
+    const [modelsRes, statusRes] = await Promise.all([
+      fetch('/v1/models').then(r => r.json()),
+      fetch('/_status').then(r => r.json()).catch(() => null),
+    ]);
+    cachedAgentIds = modelsRes.data.filter(m => m.owned_by === 'autoclaw-agent').map(m => m.id);
+    cachedRealModels = (statusRes?.models ?? []).filter(m => m.available).map(m => m.id);
+    repopulateModels();
     setStatus('ok');
   } catch {
     setStatus('bad');
     setTimeout(loadModels, 3000);
   }
+}
+
+/** Đổ lại dropdown model: theo account đang chọn (chỉ model thật) hoặc gateway (agent + model thật). */
+function repopulateModels() {
+  const sel = $('model');
+  const preferred = localStorage.getItem('ac_model') || 'main';
+  const accId = $('account').value;
+  let list;
+  if (accId) {
+    const acc = cachedAccounts.find(a => a.id === accId);
+    list = acc?.models?.length ? acc.models : cachedRealModels; // chỉ model thật của account đó
+  } else {
+    list = [...cachedAgentIds, ...cachedRealModels]; // bỏ model ảo trong catalog
+  }
+  sel.innerHTML = '';
+  let found = false;
+  for (const id of list) {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = id;
+    if (cachedAgentIds.includes(id)) opt.textContent += '  (agent)';
+    if (id === preferred) { opt.selected = true; found = true; }
+    sel.appendChild(opt);
+  }
+  if (!found) sel.value = list.includes('main') ? 'main' : (list[0] || '');
+  localStorage.setItem('ac_model', sel.value);
 }
 function setStatus(cls) {
   $('status').className = 'dot ' + cls;
@@ -239,14 +256,19 @@ function setStatus(cls) {
 }
 
 // ---------- accounts + credits ----------
+let cachedAccounts = [];   // để lọc model theo account đang chọn
+let cachedRealModels = []; // model THẬT trên upstream (từ /_status probe)
+let cachedAgentIds = [];   // agent ids (chỉ dùng được qua gateway)
+
 async function loadAccounts() {
   try {
     const res = await fetch('/v1/accounts');
     const data = await res.json();
+    cachedAccounts = data.accounts || [];
     const sel = $('account');
     const cur = sel.value;
     sel.innerHTML = '<option value="">Gateway (mặc định)</option>';
-    for (const a of data.accounts || []) {
+    for (const a of cachedAccounts) {
       const opt = document.createElement('option');
       opt.value = a.id;
       const bal = a.wallet?.ok ? ` · ${a.wallet.totalBalance.toLocaleString()}cr` : '';
@@ -255,6 +277,7 @@ async function loadAccounts() {
       sel.appendChild(opt);
     }
     sel.value = cur;
+    repopulateModels();
   } catch { /* node without accounts */ }
 }
 
@@ -270,6 +293,8 @@ async function loadCredits() {
 }
 loadCredits(); setInterval(loadCredits, 60000);
 loadAccounts(); setInterval(loadAccounts, 60000);
+$('account').onchange = repopulateModels; // đổi account → lọc model khả dụng của account đó
+$('model').onchange = () => localStorage.setItem('ac_model', $('model').value);
 
 // ---------- chat với streaming ----------
 async function send() {
@@ -351,7 +376,7 @@ async function send() {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      const e = new Error(err.error?.message || `HTTP ${res.status}`);
+      const e = new Error(err.error?.message || err.message || `HTTP ${res.status}`);
       e.quota = /quota|810000/i.test(e.message);
       throw e;
     }

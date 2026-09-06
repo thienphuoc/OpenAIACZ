@@ -168,6 +168,16 @@ async function chatDirect(req, res, body) {
     if (tried.includes(account.id)) continue;
     tried.push(account.id);
 
+    // ghost-model guard: the gateway catalog lists models that don't exist on
+    // the upstream proxy (gemini-*, glm-5.2, ...) — fail with the real list
+    if (account.modelHeaders && !account.modelHeaders[model]) {
+      const avail = Object.keys(account.modelHeaders);
+      return sendJson(res, 400, errorBody(
+        `Model "${model}" không tồn tại trên account ${account.label}. Các model khả dụng: ${avail.join(', ')}`,
+        'invalid_request_error',
+      ));
+    }
+
     const headers = headersFor(account, model);
     let upstream;
     try {
