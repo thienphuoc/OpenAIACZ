@@ -272,8 +272,15 @@ async function loadAccounts() {
       const opt = document.createElement('option');
       opt.value = a.id;
       const bal = a.wallet?.ok ? ` · ${a.wallet.totalBalance.toLocaleString()}cr` : '';
-      const bad = a.onCooldown ? ' ⛔' : '';
+      let bad = '';
+      let title = a.wallet?.ok ? `Credit: ${a.wallet.totalBalance.toLocaleString()}` : 'Không đọc được credit';
+      if (a.onCooldown) {
+        bad = ' ⛔';
+        const mins = Math.max(1, Math.ceil((a.cooldownUntil - Date.now()) / 60000));
+        title += ` — ⛔ cooldown ${mins} phút nữa: ${a.lastError?.reason || 'lỗi'}`;
+      }
       opt.textContent = `${a.label}${bal}${bad}`;
+      opt.title = title;
       sel.appendChild(opt);
     }
     sel.value = cur;
