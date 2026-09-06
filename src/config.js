@@ -41,6 +41,9 @@ export const config = {
 
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || fileCfg.requestTimeoutMs || 300_000),
 
+  // how long a (account, model) pair sleeps after a quota error before retrying
+  quotaCooldownMs: Number(process.env.QUOTA_COOLDOWN_MS || fileCfg.quotaCooldownMs || 600_000),
+
   gateway: {
     url: process.env.AUTOCLAW_WS || fileCfg.gateway?.url || 'ws://127.0.0.1:18789',
     get httpUrl() {

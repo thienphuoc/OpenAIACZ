@@ -337,19 +337,23 @@ async function send() {
     scrollIfNear();
   };
 
-  try {
+  async function streamTurn(useDirect) {
+    content = ''; reasoning = ''; mediaUrls = []; status = '';
     const res = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
         model: $('model').value, stream: true, activity: true, messages: [...messages],
-        ...( $('account').value ? { account: $('account').value } : {}),
+        ...(useDirect ? { direct: true, account: 'auto' }
+                      : ($('account').value ? { account: $('account').value } : {})),
       }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${res.status}`);
+      const e = new Error(err.error?.message || `HTTP ${res.status}`);
+      e.quota = /quota|810000/i.test(e.message);
+      throw e;
     }
 
     const reader = res.body.getReader();
@@ -373,11 +377,27 @@ async function send() {
           continue;
         }
         if (Array.isArray(j.media_urls)) { mediaUrls = j.media_urls; continue; }
+        if (j.error) {
+          const e = new Error(j.error.message || 'chat error');
+          e.quota = /quota|810000/i.test(e.message);
+          throw e;
+        }
         const d = j.choices?.[0]?.delta || {};
         if (d.reasoning_content) { reasoning += d.reasoning_content; armIdleHint(); }
         if (d.content) { content += d.content; }
         paint(); 
       }
+    }
+  } // streamTurn
+
+  try {
+    try {
+      await streamTurn(false);
+    } catch (e1) {
+      if (e1.quota && !controller.signal.aborted) {
+        setStatusText('↻ gateway hết quota — tự chuyển sang account pool…');
+        await streamTurn(true);
+      } else throw e1;
     }
     clearTimeout(idleTimer);
     if (!content && !reasoning) content = '(không có nội dung trả về)';

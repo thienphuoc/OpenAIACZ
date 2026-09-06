@@ -16,7 +16,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ACCOUNTS_PATH = path.join(ROOT, 'accounts.json');
 
 let accounts = [];            // {id, label, jwt, baseUrl, modelHeaders:{id:headers}, addedAt, lastError}
-const cooldowns = new Map();  // accountId -> untilMs
+const cooldowns = new Map();  // key: accountId hoặc accountId::modelId -> untilMs (persisted)
 let loaded = false;
 
 function load() {
@@ -24,7 +24,13 @@ function load() {
   loaded = true;
   try {
     if (fs.existsSync(ACCOUNTS_PATH)) {
-      accounts = JSON.parse(fs.readFileSync(ACCOUNTS_PATH, 'utf8')).accounts ?? [];
+      const data = JSON.parse(fs.readFileSync(ACCOUNTS_PATH, 'utf8'));
+      accounts = data.accounts ?? [];
+      // restore cooldowns, drop expired ones
+      const now = Date.now();
+      for (const [k, until] of Object.entries(data.cooldowns ?? {})) {
+        if (until > now) cooldowns.set(k, until);
+      }
     }
   } catch (err) {
     console.error(`[accounts] failed to load: ${err.message}`);
@@ -32,7 +38,10 @@ function load() {
 }
 
 function save() {
-  fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify({ accounts }, null, 2));
+  fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify({
+    accounts,
+    cooldowns: Object.fromEntries(cooldowns),
+  }, null, 2));
 }
 
 export function listAccounts() {
@@ -97,6 +106,8 @@ export function headersFor(account, modelId) {
     Authorization: 'Bearer autoclaw-internal-proxy',
     'X-Authorization': jwt,
     'X-Request-Id': crypto.randomUUID(),
+    // explicit: modelId may not have its own stored headers (fallback model)
+    'X-Request-Model': modelId,
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
     // WAF rejects unknown user agents with 400 — mirror the desktop app's SDK

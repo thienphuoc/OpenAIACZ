@@ -328,6 +328,27 @@ async function handleChatCompletions(req, res) {
     log(`chat ok model=${model} agent=${agentId || '-'} imgs=${attachments.length} media=${mediaUrls.length} finish=${result.state} tokens=${usage.total_tokens} in ${Date.now() - started}ms`);
   } catch (err) {
     settled = true;
+
+    // Quota/permission failure on the gateway's account → fall back to the
+    // multi-account pool (direct mode), like CLIProxyAPI's credential rotation.
+    // The gateway hides the 403 detail ("chat run failed"), so any agent-run
+    // failure is worth one pool attempt — cooldowns stop hammering dead accounts.
+    const quotaDead = /810000|quota|HTTP 403/i.test(err.message || '') || err.code === 'chat_error';
+    if (quotaDead && hasAccounts() && !res.headersSent) {
+      let directModel = body.model;
+      if (agentId) {
+        try {
+          const cfg = await getAgentConfig();
+          directModel = (cfg.primary || '').replace(/^zai\//, '') || directModel;
+        } catch { /* keep requested model */ }
+      }
+      log(`gateway quota failure (${err.message.slice(0, 80)}) → falling back to account pool, model=${directModel}`);
+      body.model = directModel;
+      body.direct = true;
+      body.account = 'auto';
+      return await chatDirect(req, res, body);
+    }
+
     const status = err instanceof GatewayError ? err.status : 500;
     const type = status >= 500 ? 'server_error' : 'invalid_request_error';
     if (stream) {
