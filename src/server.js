@@ -19,6 +19,7 @@ import {
   listAccounts, pickAccount, headersFor, markCooldown,
   importFromStateDir, importFromBundle, removeAccount, accountWallet, hasAccounts, getAccount,
   getAgentSystemPrompt,
+  startAutoRefreshLoop,
 } from './accounts.js';
 import {
   completionId, completionResponse, messagesToPrompt, buildUsage,
@@ -567,6 +568,7 @@ server.listen(config.port, config.host, () => {
   log(`autoclaw-openai-api listening on http://${config.host}:${config.port}/v1`);
   log(`  gateway      : ${config.gateway.url}`);
   log(`  auth         : ${config.apiKeys.length ? 'API key required' : 'disabled (set API_KEYS to enable)'}`);
+  startAutoRefreshLoop(); // live accounts pick up rotated JWTs every 30 min
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

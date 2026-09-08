@@ -44,18 +44,35 @@ function save() {
   }, null, 2));
 }
 
+function decodeJwtExp(jwt) {
+  try {
+    const payload = jwt.replace('Bearer ', '').split('.')[1];
+    const b = payload.replaceAll('-', '+').replaceAll('_', '/');
+    return JSON.parse(Buffer.from(b, 'base64').toString('utf8')).exp ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function listAccounts() {
   load();
-  return accounts.map((a) => ({
-    id: a.id,
-    label: a.label,
-    baseUrl: a.baseUrl,
-    models: Object.keys(a.modelHeaders ?? {}),
-    addedAt: a.addedAt,
-    lastError: a.lastError ?? null,
-    cooldownUntil: cooldowns.get(a.id) ?? 0,
-    onCooldown: (cooldowns.get(a.id) ?? 0) > Date.now(),
-  }));
+  const now = Date.now() / 1000;
+  return accounts.map((a) => {
+    const exp = decodeJwtExp(resolveJwt(a));
+    return {
+      id: a.id,
+      label: a.label,
+      live: !!a.live,
+      baseUrl: a.baseUrl,
+      models: Object.keys(a.modelHeaders ?? {}),
+      addedAt: a.addedAt,
+      lastError: a.lastError ?? null,
+      cooldownUntil: cooldowns.get(a.id) ?? 0,
+      onCooldown: (cooldowns.get(a.id) ?? 0) > Date.now(),
+      jwtExp: exp,
+      jwtExpired: exp != null && exp < now,
+    };
+  });
 }
 export function markCooldown(id, ms, reason, modelId) {
   // quota errors are model-specific: only skip this account FOR THAT MODEL
@@ -145,7 +162,7 @@ export function importFromStateDir(dirPath, label) {
     label: label || path.basename(dirPath),
     // live accounts re-read the JWT on every use — the app rotates it (often daily)
     live: isLocal,
-    liveJwtPath: isLocal ? path.join(path.dirname(dirPath), 'request-headers.json') : undefined,
+    liveJwtPath: isLocal ? path.join(dirPath, 'request-headers.json') : undefined,
     jwt,
     baseUrl: prov.baseUrl,
     providerHeaders: { ...prov.headers },
@@ -226,6 +243,29 @@ export function getAgentSystemPrompt() {
     agentPromptCache = null;
   }
   return agentPromptCache;
+}
+
+/**
+ * Periodic JWT refresh: re-imports every live account (re-reading its state
+ * dir) so rotated upstream tokens are picked up automatically. Snapshot
+ * accounts from other machines can't self-refresh — the UI flags those as
+ * needing a re-export after the source machine rotates its token.
+ */
+export function startAutoRefreshLoop(intervalMs = 30 * 60 * 1000) {
+  const tick = () => {
+    load();
+    for (const a of accounts.filter((x) => x.live)) {
+      try {
+        const jwt = resolveJwt(a); // re-reads liveJwtPath
+        if (jwt && jwt !== a.jwt) {
+          a.jwt = jwt;
+          save();
+          console.log(`[accounts] ${a.label}: JWT rotated, updated`);
+        }
+      } catch { /* file may be mid-write; next tick retries */ }
+    }
+  };
+  setInterval(tick, intervalMs);
 }
 
 /** Fetch official wallet balance for one account. */

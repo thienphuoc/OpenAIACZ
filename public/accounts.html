@@ -89,7 +89,7 @@
   <h2>Danh sách accounts</h2>
   <table>
     <thead>
-      <tr><th>Trạng thái</th><th>Tên</th><th>ID</th><th>Credit</th><th>Models</th><th>Lỗi gần nhất</th><th></th></tr>
+      <tr><th>Trạng thái</th><th>Tên</th><th>ID</th><th>Credit</th><th>Models</th><th>JWT</th><th>Lỗi gần nhất</th><th></th></tr>
     </thead>
     <tbody id="accounts"></tbody>
   </table>
@@ -190,23 +190,31 @@ function renderCards(accs) {
 
 function renderAccounts(accs) {
   if (!accs.length) {
-    $('accounts').innerHTML = '<tr><td colspan="7" style="color:var(--muted)">Chưa có account nào — import bằng form phía trên.</td></tr>';
+    $('accounts').innerHTML = '<tr><td colspan="8" style="color:var(--muted)">Chưa có account nào — import bằng form phía trên.</td></tr>';
     return;
   }
   $('accounts').innerHTML = accs.map(a => {
     const w = a.wallet || {};
-    const ok = w.ok && !a.onCooldown;
-    const dot = a.onCooldown ? 'cd' : (w.ok ? 'ok' : 'bad');
+    const expired = a.jwtExpired === true;
+    const ok = w.ok && !a.onCooldown && !expired;
+    const dot = expired ? 'bad' : a.onCooldown ? 'cd' : (w.ok ? 'ok' : 'bad');
     const credit = w.ok ? w.totalBalance.toLocaleString() : '—';
-    const err = a.lastError?.reason || (w.ok ? '' : w.reason || '');
+    let err = a.lastError?.reason || (w.ok ? '' : w.reason || '');
+    if (expired) err = 'JWT hết hạn — snapshot từ máy khác không tự refresh. Cần Export Auth lại từ máy gốc (hoặc mở app AutoClaw trên máy đó). ' + err;
     const models = (a.models || []).length;
+    const jwt = expired
+      ? '<span style="color:var(--bad)">⚠ hết hạn</span>'
+      : a.live
+        ? '<span style="color:var(--ok)">tự refresh</span>'
+        : '<span style="color:var(--muted)">snapshot</span>';
     return `<tr>
-      <td><span class="dot ${dot}"></span>${a.onCooldown ? 'cooldown' : (w.ok ? 'sống' : 'chết')}</td>
-      <td><b>${esc(a.label)}</b></td>
+      <td><span class="dot ${dot}"></span>${expired ? 'jwt hết hạn' : a.onCooldown ? 'cooldown' : (w.ok ? 'sống' : 'chết')}</td>
+      <td><b>${esc(a.label)}</b>${a.live ? ' <span style="color:var(--ok);font-size:11px">◉ live</span>' : ''}</td>
       <td><code>${a.id}</code></td>
       <td style="color:${w.ok ? 'var(--ok)' : 'var(--bad)'}">${credit}</td>
       <td>${models}</td>
-      <td class="err" title="${esc(err)}">${esc(err)}</td>
+      <td>${jwt}</td>
+      <td class="err" title="${esc(err)}">${esc(err.slice(0, 120))}</td>
       <td>
         <button class="danger" onclick="delAccount('${a.id}')" style="padding:4px 10px;font-size:12px">Xóa</button>
       </td>
